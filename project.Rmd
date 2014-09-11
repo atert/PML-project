@@ -1,0 +1,128 @@
+---
+title: "Practical Machine Learning Course Project Report"
+date: "September 10, 2014"
+output: html_document
+---
+
+### Background ###
+  Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement ??? a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+### Goal ###
+  The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+  
+  The information is available from the website here: <http://groupware.les.inf.puc-rio.br/har>
+
+### Read Data ###
+First, before we start the project, It's essential to read the library package and set a seed. Then, the data is imported. `source("pml_write_files.R")` is the function to output the prediction of our test data.
+```{r}
+library(ggplot2); library(caret); library(randomForest); set.seed(2322)
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+source("pml_write_files.R")
+```
+
+The first thing we need to justified is whether the column names of traing and testing can match; thus, we use the following code to see the unmatched column names.
+```{r chunkLabel}
+# identify is the column names between training and testing are same or not
+sameName <- colnames(testing) == colnames(training)
+# display the unmatched column names
+colnames(training)[sameName==FALSE]
+colnames(testing)[sameName==FALSE]
+```
+It's obvious that the classe information is not included in testing data, the other features are the same as we're going to use in training set.
+
+### Data Preprocessing ###
+There are also several columns unnecessary to be predictors, so just use the following code to identify and remove the first 5 features not related to the quantified movement.
+```{r}
+# define the dimension of training and testing data
+dimTr <- dim(training); dimTe <- dim(testing)
+head(colnames(training))
+training <- training[,6:dimTr[2]]
+testing <- testing[,6:dimTe[2]]
+```
+
+Although we truncated first 5 unnesscarry columns, there are still several columns with zero variance and lots of NA. The following code sets up `uselessCol` to verify the feasibility of each feature. Then the useless columns are deleted.
+```{r}
+# create a vector of logicals for whether the predictor is a near zero variance predictor
+uselessCol <- nearZeroVar(training, saveMetrics=TRUE)$nzv
+for ( i in 1:dim(training)[2]  )
+  if (sum(is.na(training[,i]))/dimTr[1] > 0.8)
+    uselessCol[i] <- TRUE
+# delete the useless columns
+training <- training[, uselessCol==FALSE]
+testing <- testing[, uselessCol==FALSE]
+```
+
+### Split Data into Training and Cross-Validation###
+To find the minimal out-of-sample error, the input training data is splitted into training part and cross-validation by following the cross-validation ratio, 70%, shown in the course slide.
+```{r}
+# split data into two parts
+inTrain <- createDataPartition(y=training$classe, p=0.7, list=FALSE)
+dataTrain <- training[inTrain,]
+dataCV <- training[-inTrain,]
+```
+### Plot the Data ###
+Randomly select and plot the accelaration of forearm feature in training data, we can find the the pattern is very similar and hard to distinguish among those classes A~E, so a robust training algorithm is needed to solve such a problem.
+```{r}
+qplot(accel_forearm_x, accel_forearm_y, col=classe, data=dataTrain)
+qplot(accel_forearm_z, total_accel_forearm, col=classe, data=dataTrain)
+```
+
+### Training Algorithms ###
+Apply to 3 different learning methods, classification tree, gbm and random forest.
+
+Classification Tree
+``` {r}
+# apply classification tree
+modRP <- train(classe ~ ., method="rpart", data = dataTrain)
+RP <- confusionMatrix(predict(modRP, dataCV), dataCV$classe)
+RP
+```
+
+Gradient Boosting (GBM)
+``` {r}
+# apply GBM algorithm
+modGBM <- train(classe ~ ., method="gbm", data=dataTrain)
+GBM <- confusionMatrix(predict(modGBM, dataCV), dataCV$classe)
+GBM
+```
+
+Random Forest
+```{r}
+# apply random forest algorithm
+rfTrain <- dataCV; rfCV <- dataTrain
+modRF <- train(classe ~ ., method = 'rf', data = rfTrain, prox=TRUE,
+               trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+RF <- confusionMatrix(predict(modRF, rfCV), rfCV$classe)
+RF
+```
+It costs too many time and memory to get a model of random forest if we use the original training data `dataTrain` with dimension (13737, 49). Hence, the functionality of traing set and cross-validation set are changed to each other. I use smaller set `dataCV` to get random forest model, and then evaluate the performance of this model on original training set.
+
+```{r}
+rfCV$predRight <- rfCV$classe ==  predict(modRF, rfCV)
+qplot(accel_forearm_x, accel_forearm_y, col=predRight, data=rfCV)
+```
+The prediction error of new values is then shown in this plot. Due to the good accuracy, you can see that the failure point is sparse.
+
+### Accuracy and Out-of-sample Error ###
+After I finished traing all the learning algorithms, I check the performance and show a simple comparison. Out-of-sample Error can be derived as `1-FinalAccuracy`. The performance of random forest is the best among the 3 algorithms.
+```{r}
+# sum up all the methods
+FinalAccuracy <- data.frame(RP$overall[1], GBM$overall[1], RF$overall[1])
+colnames(FinalAccuracy) <- c("RP overall", "GBM overall", "RF overall")
+FinalAccuracy
+# show the out-of-sample error
+outOfSamErr <- 1-FinalAccuracy
+rownames(outOfSamErr) <- "Out-of-sample error"
+outOfSamErr
+```
+
+### Test Data Prediction ###
+The out-of-sample error of random forest is 0.82%, the best performance of applied algorithms, so we use this to predict our testing data.
+``` {r}
+# predict the classe of testing data
+predTesting <- predict(modRF, testing)
+predTesting
+```
+
+
